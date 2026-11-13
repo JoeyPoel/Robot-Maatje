@@ -6,7 +6,7 @@ import { STRINGS } from '@/config/strings';
 import { THEME } from '@/config/theme';
 
 const ROBOT_SOUND_EFFECTS = [
-  { name: 'Countdown (3, 2, 1)', file: '003_photograph_v' },
+  { name: 'Countdown (3, 2, 1)', file: 'photograph_001.mp3' },
   { name: 'Happy Melody', file: 'BCM_happy.mp3' },
   { name: 'Surprise Chime', file: 'BCM_surprise.mp3' },
   { name: 'Car Horn', file: 'horn.mp3' },
@@ -51,14 +51,17 @@ export const SpeechAndAudioPanel: React.FC = () => {
   const handlePlaySoundEffect = async (soundFile: string) => {
     setStatusMessage(`Afspelen geluidseffect: ${soundFile}...`);
     try {
-      if (soundFile.includes('photograph') || soundFile.includes('dance')) {
-        await fetch('/api/robot/motion', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'preset', action: soundFile.includes('dance') ? 'dance_0001en' : 'w_head_001' }),
-        });
+      const res = await fetch('/api/robot/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'sound', file: soundFile }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setStatusMessage(`Geluidseffect speelt af: ${soundFile}`);
+      } else {
+        setStatusMessage(`Fout bij afspelen geluidseffect: ${data.error || 'Mislukt'}`);
       }
-      setStatusMessage(`Geluidseffect gestart: ${soundFile}`);
     } catch (err: unknown) {
       setStatusMessage(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }

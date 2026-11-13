@@ -7,6 +7,7 @@
 import WebSocket from 'ws';
 import { execFile } from 'child_process';
 import fs from 'fs';
+import { EventEmitter } from 'events';
 
 const ADB_PATH =
   process.env.ADB_PATH ||
@@ -44,10 +45,20 @@ function encodeInt(fieldNumber: number, val: number): Buffer {
   return Buffer.concat([encodeTag(fieldNumber, 0), encodeVarint(val)]);
 }
 
+function encodeFloat(fieldNumber: number, val: number): Buffer {
+  const buf = Buffer.alloc(4);
+  buf.writeFloatLE(val, 0);
+  return Buffer.concat([encodeTag(fieldNumber, 5), buf]);
+}
+
 /**
  * Builds the canonical Base64 + '&' delimited packet expected by com.ubt.pccodemao
  */
-export function buildPacket(cmdId: number, bodyBytes: Buffer, reqId = `req_${Date.now()}`): string {
+export function buildPacket(
+  cmdId: number,
+  bodyBytes: Buffer,
+  reqId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+): string {
   // MessageHeader: 1: id (string), 3: command (int32). Target (0) is omitted (proto3 default)
   const header = Buffer.concat([
     encodeString(1, reqId),
@@ -85,12 +96,85 @@ const LEGACY_EMOTION_MAP: Record<string, string> = {
   'photograph': 'codemao9',
 };
 
-export class RobotSocketClient {
+export function parsePacketHeader(buf: Buffer): { id?: string; command?: number } {
+  try {
+    let pos = 0;
+    while (pos < buf.length) {
+      const tag = buf[pos++];
+      const fieldNum = tag >>> 3;
+      const wireType = tag & 0x7;
+      if (fieldNum === 1 && wireType === 2) {
+        let len = 0;
+        let shift = 0;
+        while (pos < buf.length) {
+          const b = buf[pos++];
+          len |= (b & 0x7f) << shift;
+          if (!(b & 0x80)) break;
+          shift += 7;
+        }
+        const headerEnd = pos + len;
+        let id: string | undefined;
+        let command: number | undefined;
+        while (pos < headerEnd && pos < buf.length) {
+          const hTag = buf[pos++];
+          const hField = hTag >>> 3;
+          const hWire = hTag & 0x7;
+          if (hField === 1 && hWire === 2) {
+            let sLen = 0;
+            let sShift = 0;
+            while (pos < headerEnd) {
+              const b = buf[pos++];
+              sLen |= (b & 0x7f) << sShift;
+              if (!(b & 0x80)) break;
+              sShift += 7;
+            }
+            id = buf.subarray(pos, pos + sLen).toString('utf-8');
+            pos += sLen;
+          } else if (hField === 3 && hWire === 0) {
+            let cmd = 0;
+            let cShift = 0;
+            while (pos < headerEnd) {
+              const b = buf[pos++];
+              cmd |= (b & 0x7f) << cShift;
+              if (!(b & 0x80)) break;
+              cShift += 7;
+            }
+            command = cmd;
+          } else if (hWire === 0) {
+            while (pos < headerEnd && (buf[pos++] & 0x80)) {}
+          } else if (hWire === 2) {
+            let skipLen = 0;
+            let skipShift = 0;
+            while (pos < headerEnd) {
+              const b = buf[pos++];
+              skipLen |= (b & 0x7f) << skipShift;
+              if (!(b & 0x80)) break;
+              skipShift += 7;
+            }
+            pos += skipLen;
+          } else if (hWire === 5) {
+            pos += 4;
+          } else if (hWire === 1) {
+            pos += 8;
+          }
+        }
+        return { id, command };
+      }
+    }
+  } catch {}
+  return {};
+}
+
+export class RobotSocketClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private pendingResolvers = new Map<string, (res: any) => void>();
   private activePort: number = 8800;
   private isConnecting = false;
   private isProgramMode = false;
+
+  constructor() {
+    super();
+  }
 
   public isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
@@ -136,6 +220,14 @@ export class RobotSocketClient {
     } catch (e: any) {
       console.warn('[RobotSocket] enterProgram non-critical error:', e.message);
     }
+
+    // Subscribe to capacitive head touch events (Cmd 14)
+    try {
+      await this.subscribeHeadTouch(true);
+      console.log('[RobotSocket] Subscribed to native head touch events (Cmd 14)');
+    } catch (e: any) {
+      console.warn('[RobotSocket] subscribeHeadTouch non-critical error:', e.message);
+    }
   }
 
   private tryConnectPort(port: number, timeoutMs = 2000): Promise<void> {
@@ -174,6 +266,27 @@ export class RobotSocketClient {
   private attachListeners(ws: WebSocket, port: number) {
     ws.on('message', (data: WebSocket.Data) => {
       const str = data.toString();
+      try {
+        const raw = str.endsWith('&') ? str.slice(0, -1) : str;
+        const buf = Buffer.from(raw, 'base64');
+        const header = parsePacketHeader(buf);
+
+        // Check for unsolicited push events (Command 14 or 1014: Head Tap / Pat)
+        if (header.command === 14 || header.command === 1014) {
+          console.log('[RobotSocket] Native Head Tap Event Detected (Cmd 14)!');
+          this.emit('headTouch', { timestamp: Date.now() });
+        }
+
+        if (header.id && this.pendingResolvers.has(header.id)) {
+          const cb = this.pendingResolvers.get(header.id);
+          this.pendingResolvers.delete(header.id);
+          if (cb) cb(str);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[RobotSocket] Error parsing incoming packet:', err.message);
+      }
+
       const firstKey = this.pendingResolvers.keys().next().value;
       if (firstKey) {
         const cb = this.pendingResolvers.get(firstKey);
@@ -308,31 +421,62 @@ export class RobotSocketClient {
     return this.sendCommand(4, body, 2500);
   }
 
+  /**
+   * Command 28: Set Robot Master Volume
+   * Protobuf ChangeRobotVolumeRequest expects float volume percentage (0.0 to 100.0)
+   */
   public async setVolume(volume: number) {
-    const level = Math.max(0, Math.min(100, Math.trunc(volume)));
-    return this.sendCommand(28, encodeInt(1, level));
+    const floatVal = Math.max(0.0, Math.min(100.0, volume));
+    return this.sendCommand(28, encodeFloat(1, floatVal));
   }
 
   /**
    * Command 23: Play Audio file on robot physical loudspeaker
-   * fileName: e.g. 'custom_tts.mp3' or 'BCM_happy.mp3'
-   * storageType: 3 = PRESET_LOCAL, 4 = CUSTOMIZE_LOCAL
+   * fileName: e.g. 'custom_tts.mp3' or 'horn.mp3'
+   * storageType: 3 = PRESET_LOCAL (/system/files/music/), 4 = CUSTOMIZE_LOCAL (/sdcard/customize/music/)
+   * volume: float percentage (0.0 to 100.0)
    */
-  public async playAudio(fileName: string, storageType = 4, volume = 1.0): Promise<any> {
+  public async playAudio(fileName: string, storageType = 4, volume = 100.0): Promise<any> {
     if (!this.isProgramMode) await this.enterProgram();
     // CloudStorage: 1: url, 2: type
     const cloud = Buffer.concat([
       encodeString(1, fileName),
       encodeInt(2, storageType),
     ]);
+    const vol = volume <= 1.0 ? volume * 100.0 : volume;
     const volBuf = Buffer.alloc(4);
-    volBuf.writeFloatLE(Math.max(0.0, Math.min(1.0, volume)), 0);
+    volBuf.writeFloatLE(Math.max(0.0, Math.min(100.0, vol)), 0);
     const body = Buffer.concat([
       encodeBytes(1, cloud),
       encodeTag(2, 5),
       volBuf,
     ]);
-    return this.sendCommand(23, body, 4000);
+    return this.sendCommand(23, body, 5000);
+  }
+
+  /**
+   * Command 14: Subscribe to Patting Head / Head Touch Event
+   * Returns continuous events when user taps capacitive head sensor
+   */
+  public async subscribeHeadTouch(subscribe = true) {
+    // tag 1 (isSubscribe), wire type 0 (varint)
+    const body = Buffer.concat([encodeTag(1, 0), encodeVarint(subscribe ? 1 : 0)]);
+    return this.sendCommand(14, body, 2000);
+  }
+
+  /**
+   * Command 40: Get Robot Language Model
+   */
+  public async getRobotLanguage() {
+    return this.sendCommand(40, Buffer.alloc(0), 2000);
+  }
+
+  /**
+   * Command 41: Set Robot Language
+   */
+  public async setRobotLanguage(language: string) {
+    const body = encodeString(1, language);
+    return this.sendCommand(41, body, 4000);
   }
 
   /**

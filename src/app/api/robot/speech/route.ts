@@ -14,6 +14,11 @@ const SpeechRequestSchema = z.discriminatedUnion('type', [
     level: z.number().int().min(0).max(100),
     source: z.string().optional(),
   }),
+  z.object({
+    type: z.literal('sound'),
+    file: z.string().min(1).max(100),
+    source: z.string().optional(),
+  }),
 ]);
 
 export async function POST(req: NextRequest) {
@@ -37,6 +42,11 @@ export async function POST(req: NextRequest) {
 
     if (data.type === 'volume') {
       const res = await speechService.setVolume(data.level, data.source);
+      return NextResponse.json(res, { status: res.success ? 200 : 502 });
+    }
+
+    if (data.type === 'sound') {
+      const res = await speechService.playSound(data.file, data.source);
       return NextResponse.json(res, { status: res.success ? 200 : 502 });
     }
 

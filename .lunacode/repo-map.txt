@@ -1,0 +1,63 @@
+Package: robot-maatje
+Languages: TypeScript, JavaScript/Node
+Scripts: dev, build, start, bridge
+Deps (sample): lucide-react, next, react, react-dom, ws, zod, @types/node, @types/react, @types/react-dom, @types/ws, autoprefixer, postcss, tailwindcss, tsx, typescript
+Entrypoints: src, README.md
+Tree:
+bridge/
+  cache/
+  robotSocket.ts
+  server.ts
+  skillRunner.ts
+skills/
+  alpha_mini/
+    README.md
+    skill_connection.py
+    skill_expression.py
+    skill_motion.py
+    skill_speech.py
+    skill_vision_sensors.py
+src/
+  app/
+    api/
+      hooks/
+      robot/
+    layout.tsx
+    page.tsx
+  components/
+    expression/
+      EyeExpressionMatrix.tsx
+    motion/
+      ServoAndActionPanel.tsx
+    speech/
+      SpeechAndAudioPanel.tsx
+    telemetry/
+      SensorStatusBar.tsx
+    vision/
+      CameraFeedPanel.tsx
+  config/
+    strings.ts
+    theme.ts
+  core/
+    adapters/
+      RobotBridgeAdapter.ts
+    interfaces/
+      ai-hooks.ts
+    services/
+      AIOrchestratorService.ts
+      ExpressionService.ts
+      MotionService.ts
+      SpeechService.ts
+      VisionService.ts
+  types/
+    robot.ts
+CLAUDE.md
+next-env.d.ts
+next.config.js
+package-lock.json
+package.json
+postcss.config.js
+README.md
+tailwind.config.js
+tsconfig.json
+tsconfig.tsbuildinfo

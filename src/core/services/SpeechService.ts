@@ -30,6 +30,18 @@ export class SpeechService {
       source: source as any,
     });
   }
+
+  /**
+   * Plays built-in physical audio effects on the robot loudspeaker (/system/files/music/).
+   */
+  public async playSound(file: string, source = 'MANUAL_UI'): Promise<CommandResult> {
+    return await robotBridgeAdapter.sendCommand({
+      category: 'SPEECH',
+      action: 'sound',
+      params: { file, storageType: 3 },
+      source: source as any,
+    });
+  }
 }
 
 export const speechService = new SpeechService();

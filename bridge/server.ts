@@ -30,35 +30,46 @@ async function synthesizeAndPlayOnRobot(text: string, language = 'nl-NL'): Promi
   if (!fs.existsSync(localCache)) fs.mkdirSync(localCache, { recursive: true });
   const localMp3 = path.join(localCache, 'custom_tts.mp3');
 
-  // 1. Fetch TTS MP3 audio
-  await new Promise<void>((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-      if (res.statusCode !== 200) {
-        return reject(new Error(`TTS service HTTP ${res.statusCode}`));
-      }
-      const stream = fs.createWriteStream(localMp3);
-      res.pipe(stream);
-      stream.on('finish', () => resolve());
-      stream.on('error', reject);
-    }).on('error', reject);
-  });
+  // 1. Fetch TTS MP3 audio from Google TTS
+  try {
+    await new Promise<void>((resolve, reject) => {
+      https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`TTS service HTTP ${res.statusCode}`));
+        }
+        const stream = fs.createWriteStream(localMp3);
+        res.pipe(stream);
+        stream.on('finish', () => resolve());
+        stream.on('error', reject);
+      }).on('error', reject);
+    });
+  } catch (fetchErr: any) {
+    // Google TTS unavailable — fall back to robot's built-in TTS engine (Cmd 4)
+    console.warn(`[Bridge] Google TTS fetch failed (${fetchErr.message}), using robot built-in TTS (Cmd 4)`);
+    return await robotSocket.playTTS(text);
+  }
 
-  // 2. Push MP3 to robot storage
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      ADB_PATH,
-      ['push', localMp3, '/sdcard/customize/music/custom_tts.mp3'],
-      { timeout: 5000 },
-      (err) => {
-        if (err) return reject(err);
-        resolve();
-      }
-    );
-  });
+  // 2. Push MP3 to robot storage via ADB
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        ADB_PATH,
+        ['push', localMp3, '/sdcard/customize/music/custom_tts.mp3'],
+        { timeout: 5000 },
+        (err) => {
+          if (err) return reject(err);
+          resolve();
+        }
+      );
+    });
+  } catch (adbErr: any) {
+    // ADB not available (USB dropped / device offline) — fall back to robot built-in TTS
+    console.warn(`[Bridge] ADB push failed (${adbErr.message}), using robot built-in TTS (Cmd 4)`);
+    return await robotSocket.playTTS(text);
+  }
 
-  // 3. Play gesture + audio through robot loudspeaker
-  robotSocket.playAction('speakingAct1').catch(() => {});
-  return await robotSocket.playAudio('custom_tts.mp3', 4, 1.0);
+  // 3. Play MP3 through robot physical loudspeaker (/sdcard/customize/music/)
+  return await robotSocket.playAudio('custom_tts.mp3', 4, 100.0);
 }
 
 // Action mapping for preset movements
@@ -412,10 +423,19 @@ const server = http.createServer(async (req, res) => {
               res.end(JSON.stringify({ success: false, error: 'Volume must be an integer from 0 to 100.' }));
               return;
             }
+            // Send Command 28 (Native Robot Master Volume)
             executionResult = await robotSocket.setVolume(requestedVolume);
-            // Ensure Android STREAM_MUSIC is actively unmuted and synchronized
-            const androidVolStep = Math.max(1, Math.min(15, Math.round((requestedVolume / 100) * 15)));
-            execFile(ADB_PATH, ['shell', 'service', 'call', 'audio', '7', 'i32', '3', 'i32', String(androidVolStep), 'i32', '1'], () => {});
+            // Ensure speaker is unmuted via standard Android keyevent
+            execFile(ADB_PATH, ['shell', 'input', 'keyevent', '24'], () => {});
+          } else if (action === 'sound' || action === 'sound_effect') {
+            const soundFile = String(params?.file || 'horn.mp3');
+            // storageType: 3 = PRESET_LOCAL (/system/files/music/), 4 = CUSTOMIZE_LOCAL (/sdcard/)
+            const storageType = Number(params?.storageType) || 3;
+            executionResult = await robotSocket.playAudio(soundFile, storageType, 100.0);
+          } else if (action === 'get_language') {
+            executionResult = await robotSocket.getRobotLanguage();
+          } else if (action === 'set_language') {
+            executionResult = await robotSocket.setRobotLanguage(String(params?.language || 'en'));
           }
         }
 
@@ -475,6 +495,8 @@ async function tryAutoConnect() {
   if (!robotSocket.isConnected()) {
     try {
       await robotSocket.connect();
+      // Re-enable amps on every reconnect (they reset on robot reboot)
+      ensureSpeakerAmps();
     } catch {
       // Robot still booting or offline; retrying in background
     }
@@ -505,47 +527,87 @@ server.listen(PORT, () => {
   console.log(`WS:   ws://localhost:${PORT}`);
   console.log(`=======================================================`);
 
-  // Start capacitive head touch monitoring via system logcat
-  startHeadTouchMonitor();
+  // Ensure hardware speaker amplifiers are ON (they reset to Off on reboot)
+  ensureSpeakerAmps();
+
+  // Start capacitive head touch monitoring via native Cmd 14 and system logcat fallback
+  setupHeadTouchHandlers();
 });
 
-function startHeadTouchMonitor() {
+function triggerHeadTouch() {
+  const now = Date.now();
+  if (now - lastHeadTouchTimestamp > 3500) {
+    lastHeadTouchTimestamp = now;
+    console.log('[Bridge] Capacitive Head Touch Event Triggered!');
+
+    // 1. Play heart eyes animation
+    robotSocket.playExpression('codemao19').catch(() => {});
+
+    // 2. Play Dutch spoken friendly audio
+    synthesizeAndPlayOnRobot('Gezellig dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
+
+    // 3. Broadcast to all open UI clients via WebSocket
+    const eventMsg = JSON.stringify({ type: 'HEAD_TOUCH', timestamp: now });
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(eventMsg);
+      }
+    });
+  }
+}
+
+/**
+ * Enables all ALSA hardware speaker amplifiers via tinymix.
+ * These reset to Off on every reboot/reconnect, causing silent audio.
+ * Called on bridge startup and after every successful robot reconnect.
+ */
+function ensureSpeakerAmps(): void {
+  const ampCmds = [
+    "tinymix 'Speaker_Amp_Switch' 'On'",
+    "tinymix 'Ext_Speaker_Amp_Switch' 'On'",
+    "tinymix 'Audio_Amp_R_Switch' 'On'",
+    "tinymix 'Audio_Amp_L_Switch' 'On'",
+    "tinymix 5 '8Db'",
+    "tinymix 6 '8Db'",
+  ];
+  execFile(ADB_PATH, ['shell', ampCmds.join('; ')], { timeout: 5000 }, (err) => {
+    if (err) {
+      console.warn('[Bridge] ensureSpeakerAmps warning:', err.message);
+    } else {
+      console.log('[Bridge] Speaker amplifiers enabled (Speaker, Ext, L, R → On, PGAL/R → 8Db)');
+    }
+  });
+}
+
+function setupHeadTouchHandlers() {
+  // 1. Primary: Native Command 14 ObserveHeadRacket event listener
+  robotSocket.on('headTouch', () => {
+    triggerHeadTouch();
+  });
+
+  // 2. Secondary fallback: logcat cp2610_dev driver monitor
+  startHeadTouchLogcatMonitor();
+}
+
+function startHeadTouchLogcatMonitor() {
   try {
     const child = spawn(ADB_PATH, ['shell', 'logcat', '-v', 'brief', '-s', 'touch_down_broadcast:I', 'cp2610_dev:I']);
 
     child.stdout.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       if (text.includes('touch_down_broadcast') || text.includes('cp2610_dev')) {
-        const now = Date.now();
-        if (now - lastHeadTouchTimestamp > 3500) {
-          lastHeadTouchTimestamp = now;
-          console.log('[Bridge] Capacitive Head Touch Event Detected!');
-
-          // 1. Play heart eyes animation
-          robotSocket.playExpression('codemao19').catch(() => {});
-
-          // 2. Play Dutch spoken friendly audio
-          synthesizeAndPlayOnRobot('Gezellig dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
-
-          // 3. Broadcast to all open UI clients via WebSocket
-          const eventMsg = JSON.stringify({ type: 'HEAD_TOUCH', timestamp: now });
-          wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(eventMsg);
-            }
-          });
-        }
+        triggerHeadTouch();
       }
     });
 
     child.on('error', () => {
-      setTimeout(startHeadTouchMonitor, 5000);
+      setTimeout(startHeadTouchLogcatMonitor, 5000);
     });
 
     child.on('exit', () => {
-      setTimeout(startHeadTouchMonitor, 5000);
+      setTimeout(startHeadTouchLogcatMonitor, 5000);
     });
   } catch (err: any) {
-    console.warn('[Bridge] Head touch monitor deferred:', err.message);
+    console.warn('[Bridge] Head touch logcat monitor deferred:', err.message);
   }
 }
