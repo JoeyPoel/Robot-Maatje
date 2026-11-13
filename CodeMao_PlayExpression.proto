@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package com.ubtechinc.codemao;
+
+message PlayExpressionRequest {
+  string expressName = 1;
+  int32 dirType = 2;
+}
+
+message PlayExpressionResponse {
+  bool isSuccess = 1;
+  int32 resultCode = 2;
+}
+

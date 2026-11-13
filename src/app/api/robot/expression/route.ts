@@ -8,6 +8,7 @@ const ExpressionRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('emotion'),
     emotion: z.enum([
       'happy',
+      'heart',
       'curious',
       'surprised',
       'sleepy',

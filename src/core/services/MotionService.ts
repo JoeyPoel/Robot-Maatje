@@ -20,6 +20,18 @@ export class MotionService {
   }
 
   /**
+   * Commands walking in a given direction for N steps.
+   */
+  public async walk(direction: 'forward' | 'backward' | 'left' | 'right', steps = 1, source = 'MANUAL_UI'): Promise<CommandResult> {
+    return await robotBridgeAdapter.sendCommand({
+      category: 'MOTION',
+      action: 'walk',
+      params: { direction, steps },
+      source: source as any,
+    });
+  }
+
+  /**
    * Commands an individual servo to a clamped safe angle.
    */
   public async setServoAngle(joint: JointName, angle: number, source = 'MANUAL_UI'): Promise<CommandResult> {

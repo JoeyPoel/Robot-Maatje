@@ -9,21 +9,6 @@ const AIHookSchema = z.discriminatedUnion('event', [
     confidence: z.number().optional(),
   }),
   z.object({
-    event: z.literal('vision_detection'),
-    entities: z.array(
-      z.object({
-        label: z.string(),
-        confidence: z.number(),
-        box: z.object({
-          x: z.number(),
-          y: z.number(),
-          width: z.number(),
-          height: z.number(),
-        }),
-      })
-    ),
-  }),
-  z.object({
     event: z.literal('sensor_trigger'),
     sensor: z.enum(['head_touch', 'fall_detected', 'low_battery']),
     value: z.any().optional(),
@@ -45,23 +30,26 @@ export async function POST(req: NextRequest) {
     const { data } = parsed;
 
     if (data.event === 'user_speech') {
-      const plan = await aiOrchestratorService.handleUserInput(data.text);
+      const result = await aiOrchestratorService.handleUserInput(data.text);
       return NextResponse.json({
         handled: true,
         event: 'user_speech',
-        plan,
-        orchestratedBy: aiOrchestratorService.getAgentName(),
+        result,
       });
     }
 
     if (data.event === 'sensor_trigger') {
       if (data.sensor === 'head_touch') {
-        const plan = await aiOrchestratorService.handleUserInput('Aanraking op hoofd');
-        return NextResponse.json({ handled: true, plan });
+        const result = await aiOrchestratorService.handleUserInput(
+          'Iemand aait zojuist zachtjes over mijn hoofd. Reageer met liefdevolle hartjesogen en zeg iets liefs!'
+        );
+        return NextResponse.json({ handled: true, result });
       }
       if (data.sensor === 'fall_detected') {
-        const plan = await aiOrchestratorService.handleUserInput('Ik ben gevallen, help me opstaan');
-        return NextResponse.json({ handled: true, plan });
+        const result = await aiOrchestratorService.handleUserInput(
+          'Oei, de gyroscoop detecteert dat ik gevallen ben. Zeg dat het goed gaat en probeer op te staan!'
+        );
+        return NextResponse.json({ handled: true, result });
       }
     }
 
@@ -77,4 +65,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-

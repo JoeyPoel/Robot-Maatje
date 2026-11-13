@@ -85,21 +85,17 @@ npm run bridge
 ```
 *De bridge start op `http://localhost:8088` en streamt live telemetrie over WebSocket.*
 
-### 6. Spraak inschakelen
-Verbind de robot via USB, controleer dat ADB hem ziet en forward de officiële UBTECH-spraakbridge:
+### 6. Hardware Bridge & Spraak Inschakelen
+Verbind de robot via USB en start de bridge daemon. De bridge regelt automatisch de poort-forwarding (`tcp:8800`), schakelt de hardware luidspreker-versterkers in (`tinymix`), en zet de robot in programmeermodus:
 ```powershell
-adb devices
-adb forward tcp:8800 tcp:8800
-adb forward tcp:8801 tcp:8801
+npm run bridge
 ```
 
-Als de SRS-configuratie-app het scherm overneemt, kun je die handmatig uitschakelen en de native launcher starten:
+Als de SRS-configuratie-app het scherm overneemt, kun je die uitschakelen:
 ```powershell
 adb shell pm disable-user com.srs.robot_alpha_mini
 adb shell am start -n com.ubtrobot.launcher/.MainActivity
 ```
-
-Start daarna `npm run bridge` en de webapplicatie. Gebruik het paneel **Speech & Audio** om een zin te versturen. De TTS-opdracht is asynchroon: de interface meldt dat de opdracht naar de bridge is verstuurd, niet dat spraak fysiek hoorbaar was. De huidige UBTECH TTS-protobuf bevat geen taalveld; de stemtaal moet daarom in de Android TTS-instellingen van de robot worden ingesteld.
 
 ### 7. Start de Web Applicatie
 Open in een tweede terminal:
@@ -107,6 +103,34 @@ Open in een tweede terminal:
 npm run dev
 ```
 Navigeer naar `http://localhost:3000` om het Command Center te openen.
+
+---
+
+## 🎭 Routine Choreograaf // Drag & Drop Sequencer
+
+Onderaan het dashboard bevindt zich de **Routine Choreograaf**: een visuele studio waarmee je zonder code complexe gedragingen en interacties kunt bouwen.
+
+* **Actie Bibliotheek (Links)**: Sleep acties naar de tijdlijn of klik op `+`:
+  * **Lopen & Draaien**: Vooruit, achteruit, linksom en rechtsom draaien (1-5 stappen instelbaar).
+  * **Lichaamsgebaren**: Zwaaien, dansen op muziek, handklappen, buigen, fysio-oefeningen, grapje/scheetje, en rust/zitten.
+  * **Spraak (TTS)**: Typ elke gewenste zin in met directe keuze voor Nederlands (🇳🇱) of Engels (🇬🇧).
+  * **Oogexpressies**: Blije ogen, knipoog, hartjesogen, nieuwsgierig, verbaasd, slaperig.
+  * **Geluidseffecten**: Vrolijk deuntje, toeter, aftellen 3-2-1, sirene, verrassingschime.
+  * **Pauzes**: Wachttijd instelbaar (0.5s - 10s) om acties natuurlijk op elkaar te laten aansluiten.
+* **Tijdlijn & Volgorde**:
+  * Versleep acties om de chronologische volgorde aan te passen.
+  * Gebruik `↑` en `↓` knoppen om stappen te verplaatsen.
+  * Directe inline parameters aanpassen per actie (tekst, stappen, emotie).
+* **Dubbele Modus**:
+  * **🎮 SIMULATIE (OFFLINE)**: Speel de routine af in de browser. Spraak klinkt via de speakers van je computer, zonder dat de fysieke robot aangesloten hoeft te zijn!
+  * **🤖 LIVE ROBOT**: Voert de keten naadloos en synchroon uit op de fysieke robot.
+* **Kant-en-Klare Presets**: 1-klik knoppen voor *Welkom & Introductie*, *Dans & Feestje*, *Fysio & Bewegen*, en *Grappige Sketch*.
+
+---
+
+## 📖 Niet-technische Handleiding
+Ben je docent, student, zorgmedewerker of niet-technisch? Raadpleeg de uitgebreide Nederlandse stap-voor-stap handleiding:
+👉 **[GEBRUIKERSHANDLEIDING.md](file:///c:/Users/joeyw/GitProjects/Robot-Maatje/GEBRUIKERSHANDLEIDING.md)**
 
 ---
 

@@ -4,36 +4,56 @@
 
 :root {
   color-scheme: dark;
-  --hva-purple: #25167A;
-  --hva-purple-hover: #2C18A0;
+  --hva-royal-blue: #3220B0;
+  --hva-deep-navy: #22167A;
+  --hva-midnight: #1E1647;
+  --hva-coral-pink: #E15E7A;
   --hva-fresh-green: #00D26A;
-  --hva-sweet-pink: #FF3E83;
-  --hva-navy: #00163A;
-  --hva-background: #040A18;
-  --hva-surface: #0A1329;
+  --hva-background: #3220B0;
+  --hva-surface: #22167A;
 }
 
 body {
-  background-color: #040A18;
-  color: #F8FAFC;
+  background-color: #3220B0;
+  color: #FFFFFF;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  margin: 0;
+  padding: 0;
 }
 
-/* HvA Custom Sleek Scrollbars */
+/* HvA Link with Arrow and Underline matching hva.nl styleguide */
+.hva-arrow-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: #FFFFFF;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.hva-arrow-link:hover {
+  opacity: 0.9;
+  transform: translateX(2px);
+}
+
+/* HvA Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #040A18;
+  background: #22167A;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1A2952;
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #00D26A;
+  background: #E15E7A;
 }

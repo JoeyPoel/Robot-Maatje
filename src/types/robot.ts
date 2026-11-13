@@ -60,10 +60,16 @@ export type PresetActionName =
   | 'pushups'
   | 'scheet'
   | 'armoefening'
-  | 'hoofd_schouder';
+  | 'hoofd_schouder'
+  | 'head_left'
+  | 'head_right'
+  | 'head_center'
+  | 'w_head_004_v'
+  | 'w_head_005_v';
 
 export type EmotionType =
   | 'happy'
+  | 'heart'
   | 'curious'
   | 'surprised'
   | 'sleepy'
@@ -74,7 +80,7 @@ export type EmotionType =
   | 'photograph';
 
 export interface BatteryTelemetry {
-  level: number;
+  level: number | null;
   voltage: number;
   temperature: number;
   status: 'charging' | 'discharging' | 'full' | 'unknown';

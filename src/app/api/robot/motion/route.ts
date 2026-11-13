@@ -37,7 +37,18 @@ const MotionRequestSchema = z.discriminatedUnion('type', [
       'scheet',
       'armoefening',
       'hoofd_schouder',
+      'head_left',
+      'head_right',
+      'head_center',
+      'w_head_004_v',
+      'w_head_005_v',
     ]),
+    source: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('walk'),
+    direction: z.enum(['forward', 'backward', 'left', 'right']),
+    steps: z.number().min(1).max(10).default(1),
     source: z.string().optional(),
   }),
   z.object({
@@ -88,6 +99,15 @@ export async function POST(req: NextRequest) {
     if (data.type === 'preset') {
       const res = await motionService.executePresetAction(
         data.action as PresetActionName,
+        data.source
+      );
+      return NextResponse.json(res);
+    }
+
+    if (data.type === 'walk') {
+      const res = await motionService.walk(
+        data.direction,
+        data.steps,
         data.source
       );
       return NextResponse.json(res);

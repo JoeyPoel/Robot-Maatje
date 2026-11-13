@@ -98,6 +98,12 @@ const ACTION_MAP: Record<string, string> = {
   nod: '011_1_1',
   shake_head: '037_1_1',
   tilt_head: '038_1_1',
+  head_left: 'w_head_004_v',
+  head_right: 'w_head_005_v',
+  head_center: 'w_head_001',
+  w_head_004_v: 'w_head_004_v',
+  w_head_005_v: 'w_head_005_v',
+  w_head_006_v: 'w_head_006_v',
   wave: '40_1_1',
   bow: '42_1_1',
   pushups: '012_1_1',
@@ -109,6 +115,9 @@ const ACTION_MAP: Record<string, string> = {
 // Emotion mapping for eye LCD animations (Exact verified translation from /system/files/expresss/codemao*.json)
 const EMOTION_MAP: Record<string, string> = {
   happy: 'codemao16',       // "笑脸" - Smiling Happy Face
+  heart: 'codemao19',       // "爱心" - Loving Hearts in eyes
+  love: 'codemao19',        // "爱心" - Loving Hearts in eyes
+  hartjes: 'codemao19',     // "爱心" - Loving Hearts in eyes
   wink: 'codemao20',        // "眨眼" - Winking / Blinking
   surprised: 'codemao8',    // "惊讶" - Surprised / Astonished
   sleepy: 'codemao4',       // "入睡" - Falling Asleep
@@ -124,20 +133,22 @@ let cachedFrame: Buffer | null = null;
 let lastCaptureTime = 0;
 let isCapturingFrame = false;
 
-async function getRealBattery(): Promise<{ level: number; status: string; voltage: number }> {
+async function getRealBattery(): Promise<{ level: number | null; status: string; voltage: number }> {
   return new Promise((resolve) => {
     execFile(ADB_PATH, ['shell', 'dumpsys', 'battery'], { timeout: 1500 }, (err, stdout) => {
       if (!err && stdout) {
         const levelMatch = stdout.match(/level:\s*(\d+)/);
         const statusMatch = stdout.match(/status:\s*(\d+)/);
         const voltMatch = stdout.match(/voltage:\s*(\d+)/);
-        const level = levelMatch ? parseInt(levelMatch[1], 10) : 59;
-        const statusNum = statusMatch ? parseInt(statusMatch[1], 10) : 2;
-        const status = statusNum === 2 ? 'charging' : 'discharging';
-        const voltage = voltMatch ? parseInt(voltMatch[1], 10) : 3822;
-        return resolve({ level, status, voltage });
+        if (levelMatch) {
+          const level = parseInt(levelMatch[1], 10);
+          const statusNum = statusMatch ? parseInt(statusMatch[1], 10) : 2;
+          const status = statusNum === 2 ? 'charging' : 'discharging';
+          const voltage = voltMatch ? parseInt(voltMatch[1], 10) : 0;
+          return resolve({ level, status, voltage });
+        }
       }
-      resolve({ level: 59, status: 'charging', voltage: 3822 });
+      resolve({ level: null, status: 'unknown', voltage: 0 });
     });
   });
 }
@@ -540,11 +551,11 @@ function triggerHeadTouch() {
     lastHeadTouchTimestamp = now;
     console.log('[Bridge] Capacitive Head Touch Event Triggered!');
 
-    // 1. Play heart eyes animation
+    // 1. Play heart eyes animation (codemao19)
     robotSocket.playExpression('codemao19').catch(() => {});
 
-    // 2. Play Dutch spoken friendly audio
-    synthesizeAndPlayOnRobot('Gezellig dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
+    // 2. Play Dutch spoken friendly audio ("Wat leuk...")
+    synthesizeAndPlayOnRobot('Wat leuk dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
 
     // 3. Broadcast to all open UI clients via WebSocket
     const eventMsg = JSON.stringify({ type: 'HEAD_TOUCH', timestamp: now });

@@ -14,7 +14,9 @@
 This physical humanoid robot was originally manufactured by **UBTECH** as the **Alpha Mini** (or *Iron Man / Edu* series) and distributed in the Netherlands under the commercial name **Robot Maatje** / **Zorgrobot Robin** by **Smart Robot Solutions (SRS)**.
 
 ### Verified Hardware Identity
-* **Device Serial Number (ADB):** `010058YUD18082410124`
+* **Device Serial Numbers (ADB):**
+  * Robot #1: `010058YUD18082410124` (Alpha Mini, Android 7.0 / MTK)
+  * Robot #2: `010058YUD18081602131` (Alpha Mini, Android 7.1.1 / MTK)
 * **Vendor Serial Code:** `alpha-EAA003UBT10012560`
 * **Active Wi-Fi IP (wlan0):** `145.3.127.104` (MAC: `fc:53:9e:c5:46:54`)
 * **Subnet:** `145.3.0.0/16` (Eduroam / Local Network)
@@ -65,6 +67,18 @@ Out of the box, the Dutch vendor installed `com.srs.robot_alpha_mini`.
      ```
    - Wire Protocol: **Base64-encoded Google Protocol Buffers (proto3)**.
 
+### H. UvA / HvA LiteLLM Proxy & AI Multimodal Pipeline
+The robot is equipped with full conversational AI, tool calling, and multimodal vision via the institutional LiteLLM proxy:
+* **Gateway Endpoint:** `https://llmproxy.uva.nl/v1` (or `https://llmproxy.hva.nl/v1`)
+* **Standard Models:** `gpt-4o-mini`, `gpt-4o`, `claude-sonnet-4.5`, `whisper-large-v3`
+* **Tool Calling Capabilities:**
+  - `move_robot`: walks forward, backward, turns left or right.
+  - `play_gesture`: executes physical routines (wave greeting, dance, clap hands, bow, pushups).
+  - `show_emotion`: sets eye LCD animations (e.g. `heart` for loving heart eyes, `happy`, `wink`).
+  - `speak_text`: synthesizes natural Dutch speech via the robot's hardware speaker.
+  - `inspect_camera_view`: sends live 13MP forehead frames to vision LLM for instant scene & object recognition.
+* **Auto Face Tracking:** The camera feed uses real-time face centroid calculation to rotate the robot's head and body towards the user, locking on with friendly heart eyes (`codemao19`).
+
 ---
 
 ## 3. Reverse-Engineered WebSocket Protocol (`com.ubt.pccodemao`)
@@ -110,12 +124,13 @@ message MessageHeader {
 | **`11`** | `SET_MOUTH_LAMP_REQUEST` | Set mouth LED color and mode | `SetMouthLampRequest { int32 mode = 1; int32 color = 2; int32 duration = 3; int32 breathDuration = 4; }` |
 | **`22`** | `SWITCH_MOUTH_LAMP_REQUEST`| Turn mouth LED ON / OFF | `ControlMouthRequest { bool isOpen = 1; }` |
 | **`9`** | `TAKE_PICTURE_REQUEST` | Snap photo from 13MP forehead camera | `TakePictureRequest { int32 type = 1; }` (returns picPath without hijacking eye LCD) |
+| **`14`** | `SUBSCRIBE_HEAD_RACKET_REQUEST` | **Subscribe to Capacitive Head Touch** | `ObserveHeadRacketRequest { bool isSubscribe = 1; }` |
 | **`15`** | `CONTROL_BEHAVIOR_REQUEST` | Start/stop dance routines (`dance_0001`..`11`)| `ControlBehaviorRequest { string name = 1; int32 eventType = 2; }` |
-| **`28`** | `CHANGE_ROBOT_VOLUME_REQUEST`| Set audio speaker volume | `ChangeRobotVolumeRequest { int32 level = 1; }` (0-100) |
-| **`5`** | `CHANGE_ROBOT_VOLUME_REQUEST`| Set master audio volume (0-100) | `ChangeRobotVolumeRequest { int32 volume = 1; }` |
-| **`10`**| `PLAY_EXPRESSION_REQUEST`| Dual eye LCD emotion animations | `PlayExpressionRequest { string expressName = 1; int32 dirType = 2; }` |
-| **`12`**| `SET_MOUTH_LAMP_REQUEST`| Control mouth RGB LEDs | `SetMouthLampRequest { bool enable = 1; }` |
-| **`23`**| `PLAY_AUDIO_REQUEST` | Play local audio file / sound effect | `PlayAudioRequest { string path = 1; }` |
+| **`23`** | `PLAY_AUDIO_REQUEST` | **Play audio file on physical loudspeaker** | `PlayAudioRequest { CloudStorage cloud = 1; float volume = 2; }` (type: 3=preset, 4=custom) |
+| **`24`** | `STOP_AUDIO_REQUEST` | Stop playing audio | Empty `{}` |
+| **`28`** | `CHANGE_ROBOT_VOLUME_REQUEST`| **Set Robot Master Volume (0.0 to 100.0f)** | `ChangeRobotVolumeRequest { float volume = 1; }` |
+| **`40`** | `GET_ROBOT_LANGUAGE_MODE_REQUEST`| Query active language model | Empty `{}` |
+| **`41`** | `SET_ROBOT_LANGUAGE_REQUEST` | Set active language model | `SetLanguageRequest { string language = 1; }` |
 
 ### Fully Verified Physical Actions (`/system/files/actions/` & `/sdcard/customize/actions/`)
 * **Locomotion & Posture:**
@@ -243,9 +258,55 @@ To run a quick single-command test:
 npx tsx -e "import { robotSocket } from './bridge/robotSocket'; (async () => { await robotSocket.connect(); await robotSocket.playAction('say_hello_avatar'); process.exit(0); })();"
 ```
 
+### Audio Hardware Architecture & TTS Subsystem
+
+1. **Volume Protobuf Convention (Critical Finding):**
+   - Decompiled from `PcCodeMao.apk` (`CodeMao_ChangeRobotVolume.proto`): `ChangeRobotVolumeRequest { float volume = 1; }`.
+   - The volume parameter is a **percentage float from 0.0 to 100.0**, NOT a normalized 0.0 to 1.0!
+   - Sending `0.80f` results in Android integer rounding to 0 (`STREAM_MUSIC: Muted: true, Current: 0`). Sending `80.0f` correctly sets `STREAM_MUSIC: 12..15`.
+   - Never call `service call audio 7` (which executes `setMasterMute(true)` on Android 7.x). Use `input keyevent 24` (Volume Up) to unmute if needed.
+
+2. **ALSA Hardware Amplifier Switches (`tinymix`):**
+   - MediaTek MT6739 audio amplifiers reset to `Off` on robot reboot / power cycle.
+   - The bridge automatically enables them on daemon startup and after every reconnect:
+     ```bash
+     tinymix 'Speaker_Amp_Switch' 'On'
+     tinymix 'Ext_Speaker_Amp_Switch' 'On'
+     tinymix 'Audio_Amp_R_Switch' 'On'
+     tinymix 'Audio_Amp_L_Switch' 'On'
+     tinymix 5 '8Db'
+     tinymix 6 '8Db'
+     ```
+
+3. **Dual TTS Audio Pipeline:**
+   - **Primary**: Google TTS synthesizes high-quality Dutch/English MP3 audio -> saved locally -> pushed via ADB to `/sdcard/customize/music/custom_tts.mp3` -> played via native Cmd 23 `playAudio('custom_tts.mp3', 4, 100.0)`.
+   - **Automatic Fallback**: If ADB USB connection is lost or offline, the bridge automatically falls back to native Command 4 `playTTS(text)` so speech never halts.
+
+4. **Capacitive Head Touch Sensor (Cmd 14):**
+   - Subscribed via Cmd 14 `ObserveHeadRacketRequest { isSubscribe: true }`.
+   - Push events with `command: 14` or `command: 1014` are parsed directly from incoming WebSocket packets.
+   - Fallback logcat monitor watches `touch_down_broadcast:I cp2610_dev:I`.
+   - Triggers `codemao19` (heart eyes), spoken Dutch response, and broadcasts `HEAD_TOUCH` over WebSocket.
+
 ---
 
-## 5. Clean Repository Architecture
+## 5. Routine Choreographer // Drag & Drop Action Sequencer
+
+Located at `src/components/sequencer/ActionSequencerPanel.tsx` (types at `src/types/sequence.ts`).
+
+* **Action Palette**: Movements (walk/turn), physical gestures (wave, dance, bow, klappen, fysio), spoken text (TTS), eye expressions, sound effects, and customizable wait pauses.
+* **Choreography Timeline**:
+  - Drag & drop reordering using native HTML5 DnD + Up/Down buttons.
+  - Inline tuners for every step parameter (e.g. step count, text content, language, emotion).
+  - Chronological step runner with live active step indicators (`#00D26A` pulsing border).
+* **Dual Execution Modes**:
+  - **`🎮 SIMULATIE (OFFLINE)`**: Full virtual choreography playback with Web Speech Synthesis through PC speakers. Works with robot disconnected.
+  - **`🤖 LIVE ROBOT`**: Dispatches commands sequentially to the physical robot via `/api/command` and `/api/robot/*`.
+* **Preset Routines**: Includes 4 instant presets (*Welkom & Introductie*, *Dans & Feestje*, *Fysio & Bewegen*, *Grappige Sketch*) and localStorage persistence.
+
+---
+
+## 6. Clean Repository Architecture
 
 The codebase has been trimmed to strict production standards:
 
@@ -277,7 +338,7 @@ The codebase has been trimmed to strict production standards:
 
 ---
 
-## 6. How to Run the Production Stack
+## 7. How to Run the Production Stack
 
 1. **Start the Local Hardware Bridge Daemon:**
    ```powershell
