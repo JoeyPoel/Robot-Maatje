@@ -8,7 +8,7 @@ import http from 'http';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import { skillRunner } from './skillRunner';
 import { robotSocket } from './robotSocket';
@@ -219,6 +219,7 @@ async function getCameraFrame(): Promise<Buffer | null> {
 }
 
 let eyeResetTimer: NodeJS.Timeout | null = null;
+let lastHeadTouchTimestamp = 0;
 
 const server = http.createServer(async (req, res) => {
   // CORS Headers
@@ -251,6 +252,7 @@ const server = http.createServer(async (req, res) => {
       const conn = await skillRunner.execute('SYSTEM', 'health', []);
       const sensors = await skillRunner.execute('VISION', 'telemetry', ['--telemetry']);
       const realBattery = await getRealBattery();
+      const headTouched = Date.now() - lastHeadTouchTimestamp < 3500;
 
       const payload = {
         connected: (conn.data as any)?.connected ?? false,
@@ -263,7 +265,10 @@ const server = http.createServer(async (req, res) => {
         },
         wifi: (conn.data as any)?.wifi ?? { ip: '145.3.127.104', connected: true },
         services: (conn.data as any)?.services ?? { pccodemao: true, motionService: true },
-        sensors: (sensors.data as any)?.telemetry ?? { is_fallen: false, head_touched: false },
+        sensors: {
+          is_fallen: (sensors.data as any)?.telemetry?.is_fallen ?? false,
+          head_touched: headTouched,
+        },
         timestamp: new Date().toISOString(),
       };
 
@@ -408,6 +413,9 @@ const server = http.createServer(async (req, res) => {
               return;
             }
             executionResult = await robotSocket.setVolume(requestedVolume);
+            // Ensure Android STREAM_MUSIC is actively unmuted and synchronized
+            const androidVolStep = Math.max(1, Math.min(15, Math.round((requestedVolume / 100) * 15)));
+            execFile(ADB_PATH, ['shell', 'service', 'call', 'audio', '7', 'i32', '3', 'i32', String(androidVolStep), 'i32', '1'], () => {});
           }
         }
 
@@ -462,8 +470,19 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 });
 
-// Initial warmup of connection
-robotSocket.connect().catch((e) => console.log('[Bridge] RobotSocket link initialized deferred:', e.message));
+// Background watchdog that auto-connects as soon as ADB device powers on
+async function tryAutoConnect() {
+  if (!robotSocket.isConnected()) {
+    try {
+      await robotSocket.connect();
+    } catch {
+      // Robot still booting or offline; retrying in background
+    }
+  }
+}
+
+tryAutoConnect();
+setInterval(tryAutoConnect, 4000);
 
 server.on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
@@ -485,4 +504,48 @@ server.listen(PORT, () => {
   console.log(`CAM:  http://localhost:${PORT}/api/camera-frame`);
   console.log(`WS:   ws://localhost:${PORT}`);
   console.log(`=======================================================`);
+
+  // Start capacitive head touch monitoring via system logcat
+  startHeadTouchMonitor();
 });
+
+function startHeadTouchMonitor() {
+  try {
+    const child = spawn(ADB_PATH, ['shell', 'logcat', '-v', 'brief', '-s', 'touch_down_broadcast:I', 'cp2610_dev:I']);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      if (text.includes('touch_down_broadcast') || text.includes('cp2610_dev')) {
+        const now = Date.now();
+        if (now - lastHeadTouchTimestamp > 3500) {
+          lastHeadTouchTimestamp = now;
+          console.log('[Bridge] Capacitive Head Touch Event Detected!');
+
+          // 1. Play heart eyes animation
+          robotSocket.playExpression('codemao19').catch(() => {});
+
+          // 2. Play Dutch spoken friendly audio
+          synthesizeAndPlayOnRobot('Gezellig dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
+
+          // 3. Broadcast to all open UI clients via WebSocket
+          const eventMsg = JSON.stringify({ type: 'HEAD_TOUCH', timestamp: now });
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(eventMsg);
+            }
+          });
+        }
+      }
+    });
+
+    child.on('error', () => {
+      setTimeout(startHeadTouchMonitor, 5000);
+    });
+
+    child.on('exit', () => {
+      setTimeout(startHeadTouchMonitor, 5000);
+    });
+  } catch (err: any) {
+    console.warn('[Bridge] Head touch monitor deferred:', err.message);
+  }
+}

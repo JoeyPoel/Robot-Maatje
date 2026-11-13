@@ -64,14 +64,14 @@ export const SpeechAndAudioPanel: React.FC = () => {
     }
   };
 
-  const handleVolumeChange = async (newVol: number) => {
-    setVolume(newVol);
+  const handleVolumeCommit = async (newVol: number) => {
     try {
       await fetch('/api/robot/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'volume', level: newVol }),
       });
+      setStatusMessage(`Volume aangepast naar ${newVol}%`);
     } catch {
       // Squelch
     }
@@ -185,7 +185,9 @@ export const SpeechAndAudioPanel: React.FC = () => {
           min={0}
           max={100}
           value={volume}
-          onChange={(e) => handleVolumeChange(parseInt(e.target.value, 10))}
+          onChange={(e) => setVolume(parseInt(e.target.value, 10))}
+          onPointerUp={(e) => handleVolumeCommit(parseInt((e.target as HTMLInputElement).value, 10))}
+          onKeyUp={(e) => handleVolumeCommit(parseInt((e.target as HTMLInputElement).value, 10))}
           className="w-full accent-[#00D26A] h-1.5 bg-[#040A18] rounded-lg cursor-pointer"
         />
       </div>

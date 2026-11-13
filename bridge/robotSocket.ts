@@ -92,31 +92,42 @@ export class RobotSocketClient {
   private isConnecting = false;
   private isProgramMode = false;
 
+  public isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
   public async connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
     if (this.isConnecting) return;
 
     this.isConnecting = true;
 
-    // Try primary port 8800, fallback to 8801
-    const ports = [8800, 8801];
-    let connected = false;
+    // Ensure ADB port forward is always active
+    await new Promise<void>((resolve) => {
+      execFile(ADB_PATH, ['forward', 'tcp:8800', 'tcp:8800'], () => resolve());
+    });
 
-    for (const port of ports) {
+    // Strictly connect to Port 8800 (com.ubt.pccodemao RobotWebSocketServer)
+    // Note: Port 8801 is PyWebSocketServer (pip installer) and must NOT be used for robot commands.
+    let connected = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        await this.tryConnectPort(port, 2000);
-        this.activePort = port;
+        await this.tryConnectPort(8800, 2000);
+        this.activePort = 8800;
         connected = true;
-        console.log(`[RobotSocket] Successfully established link on port ${port}`);
+        console.log(`[RobotSocket] Successfully established link on port 8800 (attempt ${attempt})`);
         break;
       } catch (err: any) {
-        console.log(`[RobotSocket] Port ${port} not reachable (${err.message}), trying alternative...`);
+        console.log(`[RobotSocket] Port 8800 attempt ${attempt}/3 failed: ${err.message}`);
+        if (attempt < 3) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
       }
     }
 
     this.isConnecting = false;
     if (!connected) {
-      throw new Error('Unable to connect to robot daemon on ports 8800 or 8801');
+      throw new Error('Unable to connect to robot daemon on port 8800');
     }
 
     // Immediately put robot in programming mode to preempt autonomous idle blinks
