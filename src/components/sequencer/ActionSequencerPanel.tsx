@@ -457,10 +457,10 @@ export const ActionSequencerPanel: React.FC = () => {
         if (res.ok) {
           const data = await res.json();
           if (mounted) {
-            setIsRobotConnected(Boolean(data.connected));
-            // Only force simulation if robot is definitely unreachable
-            if (!data.connected) {
-              setIsSimulationMode(true);
+            const connected = Boolean(data.connected);
+            setIsRobotConnected(connected);
+            if (connected) {
+              setIsSimulationMode(false);
             }
           }
         }
@@ -700,13 +700,9 @@ export const ActionSequencerPanel: React.FC = () => {
         await new Promise((r) => setTimeout(r, params.durationMs || 1000));
       }
     } catch (err: any) {
-      console.warn('[Sequencer] Hardware command failed, falling back to simulation:', err.message);
-      // Auto-fallback so sequence doesn't crash when robot disconnects
-      if (step.type === 'speak') {
-        await speakInBrowser((step.params as SpeakParams).text, (step.params as SpeakParams).language);
-      } else {
-        await new Promise((r) => setTimeout(r, 1500));
-      }
+      console.warn('[Sequencer] Hardware command failed:', err.message);
+      setStatusLog(`Fout bij hardware-stap (${step.title}): ${err.message}`);
+      await new Promise((r) => setTimeout(r, 1500));
     }
   };
 

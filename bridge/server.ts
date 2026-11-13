@@ -183,7 +183,7 @@ async function pullLatestCameraPhoto(): Promise<string> {
 let lastWatchdogTime = 0;
 async function ensureCameraForeground(): Promise<void> {
   const now = Date.now();
-  if (now - lastWatchdogTime < 5000) return;
+  if (now - lastWatchdogTime < 3000) return;
   lastWatchdogTime = now;
 
   return new Promise((resolve) => {
@@ -192,8 +192,13 @@ async function ensureCameraForeground(): Promise<void> {
       ['shell', 'dumpsys', 'window', 'windows'],
       { maxBuffer: 1024 * 1024 },
       (err, stdout) => {
-        if (!err && stdout && !stdout.includes('com.mediatek.camera/com.android.camera.CameraActivity')) {
-          console.log('[Bridge] Restoring camera viewfinder to foreground...');
+        const isCameraFocused = Boolean(
+          stdout &&
+          stdout.match(/mCurrentFocus=Window\{[^}]*com\.mediatek\.camera\/com\.android\.camera\.CameraActivity/)
+        );
+
+        if (!isCameraFocused) {
+          console.log('[Bridge] Camera is not focused in foreground; restoring CameraActivity...');
           execFile(
             ADB_PATH,
             ['shell', 'am', 'start', '-n', 'com.mediatek.camera/com.android.camera.CameraActivity'],
