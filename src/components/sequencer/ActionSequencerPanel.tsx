@@ -437,7 +437,6 @@ export const ActionSequencerPanel: React.FC = () => {
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [statusLog, setStatusLog] = useState<string>('Gereed om routine af te spelen.');
   const [isLooping, setIsLooping] = useState<boolean>(false);
-  const [isSimulationMode, setIsSimulationMode] = useState<boolean>(false); // Default to Live Robot
   const [isRobotConnected, setIsRobotConnected] = useState<boolean>(true);
 
   // Drag & drop state
@@ -457,11 +456,7 @@ export const ActionSequencerPanel: React.FC = () => {
         if (res.ok) {
           const data = await res.json();
           if (mounted) {
-            const connected = Boolean(data.connected);
-            setIsRobotConnected(connected);
-            if (connected) {
-              setIsSimulationMode(false);
-            }
+            setIsRobotConnected(Boolean(data.connected));
           }
         }
       } catch {
@@ -594,59 +589,7 @@ export const ActionSequencerPanel: React.FC = () => {
   const executeSingleStep = async (step: SequenceStep): Promise<void> => {
     if (abortExecutionRef.current) return;
 
-    // Browser audio synthesis helper for simulation / offline preview
-    const speakInBrowser = (text: string, lang = 'nl-NL'): Promise<void> => {
-      return new Promise((resolve) => {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = lang;
-          utterance.rate = 1.0;
-          utterance.onend = () => resolve();
-          utterance.onerror = () => resolve();
-          window.speechSynthesis.speak(utterance);
-        } else {
-          resolve();
-        }
-      });
-    };
-
-    if (isSimulationMode) {
-      // --- VIRTUELE SIMULATIE MODUS (Geen robot verbinding vereist) ---
-      if (step.type === 'motion') {
-        const params = step.params as MotionParams;
-        const dirDutch = { forward: 'vooruit', backward: 'achteruit', left: 'linksom', right: 'rechtsom' }[params.direction];
-        setStatusLog(`[Simulatie] Maatje loopt ${params.steps} stap(pen) ${dirDutch}... 🚶`);
-        await new Promise((r) => setTimeout(r, Math.max(1200, (params.steps || 1) * 1500)));
-      } else if (step.type === 'gesture') {
-        const params = step.params as GestureParams;
-        setStatusLog(`[Simulatie] Maatje voert gebaar uit: ${step.title}... ✨`);
-        const duration = ['dance_0001en', 'fysio1', 'fysio2', 'scheet', 'pushups'].includes(params.action) ? 3500 : 2000;
-        await new Promise((r) => setTimeout(r, duration));
-      } else if (step.type === 'speak') {
-        const params = step.params as SpeakParams;
-        setStatusLog(`[Simulatie] Maatje spreekt: "${params.text}"... 🗣️`);
-        await Promise.race([
-          speakInBrowser(params.text, params.language),
-          new Promise((r) => setTimeout(r, Math.max(2500, params.text.length * 85))),
-        ]);
-      } else if (step.type === 'expression') {
-        const params = step.params as ExpressionParams;
-        setStatusLog(`[Simulatie] Ogen tonen emotie: ${params.emotion}... 😊`);
-        await new Promise((r) => setTimeout(r, 1200));
-      } else if (step.type === 'sound') {
-        const params = step.params as SoundParams;
-        setStatusLog(`[Simulatie] Geluidseffect: ${params.name || params.file}... 🔊`);
-        await new Promise((r) => setTimeout(r, 1800));
-      } else if (step.type === 'pause') {
-        const params = step.params as PauseParams;
-        setStatusLog(`[Simulatie] Pauze ${(params.durationMs / 1000).toFixed(1)}s... ⏳`);
-        await new Promise((r) => setTimeout(r, params.durationMs || 1000));
-      }
-      return;
-    }
-
-    // --- LIVE ROBOT HARDWARE UITVOERING ---
+    // --- LIVE ROBOT HARDWARE UITVOERING (100% via robot hardware, NO browser speakers) ---
     try {
       if (step.type === 'motion') {
         const params = step.params as MotionParams;
@@ -818,24 +761,23 @@ export const ActionSequencerPanel: React.FC = () => {
 
         {/* Global Controls: Play, Stop, Loop, Mode, Save */}
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => setIsSimulationMode(!isSimulationMode)}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition-all shadow-sm ${
-              !isSimulationMode
-                ? 'bg-[#00D26A] text-slate-950 border-[#00D26A] shadow-md'
-                : 'bg-[#1E1647] border-white/20 text-white/90 hover:text-white'
+          <div
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition-all ${
+              isRobotConnected
+                ? 'bg-[#00D26A]/20 border-[#00D26A] text-[#00D26A]'
+                : 'bg-[#FF3E83]/20 border-[#FF3E83] text-[#FFA8C8]'
             }`}
-            title="Klik om te schakelen tussen fysieke robot en laptop simulatie"
+            title="Alle stappen worden direct op de fysieke robot uitgevoerd"
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                !isSimulationMode ? 'bg-slate-950' : 'bg-[#E15E7A]'
+                isRobotConnected ? 'bg-[#00D26A] animate-pulse' : 'bg-[#FF3E83]'
               }`}
             />
             <span>
-              {!isSimulationMode ? '🤖 LIVE ROBOT (ACTIEF)' : '🎮 LAPTOP PREVIEW'}
+              {isRobotConnected ? '🤖 LIVE ROBOT (HARDWARE)' : '⚠️ ROBOT VERBINDING ZOEKEN'}
             </span>
-          </button>
+          </div>
 
           <button
             onClick={() => setIsLooping(!isLooping)}

@@ -390,6 +390,11 @@ const server = http.createServer(async (req, res) => {
             const targetExp = EMOTION_MAP[requested] || requested;
             executionResult = await robotSocket.playExpression(targetExp);
 
+            // Dual dispatch for heart eyes to guarantee instant LCD rendering
+            if (targetExp === 'codemao19' || requested === 'heart' || requested === 'love' || requested === 'tap_head') {
+              execFile(ADB_PATH, ['shell', 'am', 'broadcast', '-a', 'com.ubtrobot.express.PLAY', '--es', 'express_name', '001_tapHead.gif'], () => {});
+            }
+
             // Auto-reset eye loop back to normal neutral blinking after 4s
             if (eyeResetTimer) clearTimeout(eyeResetTimer);
             eyeResetTimer = setTimeout(() => {
@@ -556,8 +561,9 @@ function triggerHeadTouch() {
     lastHeadTouchTimestamp = now;
     console.log('[Bridge] Capacitive Head Touch Event Triggered!');
 
-    // 1. Play heart eyes animation (codemao19)
+    // 1. Play heart eyes animation (codemao19 + native broadcast)
     robotSocket.playExpression('codemao19').catch(() => {});
+    execFile(ADB_PATH, ['shell', 'am', 'broadcast', '-a', 'com.ubtrobot.express.PLAY', '--es', 'express_name', '001_tapHead.gif'], () => {});
 
     // 2. Play Dutch spoken friendly audio ("Wat leuk...")
     synthesizeAndPlayOnRobot('Wat leuk dat je me over mijn bol aait!', 'nl-NL').catch(() => {});
